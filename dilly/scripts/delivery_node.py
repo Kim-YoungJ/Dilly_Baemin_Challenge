@@ -18,6 +18,7 @@ class DeliveryNode:
         self.Pickup = True
         self.service_call = False
         self.DillyStatusStop = False
+        self.DillyDeliveryItem = []
         self.rate = rospy.Rate(3)  
         
         # subscribe
@@ -27,9 +28,11 @@ class DeliveryNode:
 
         # publish
         self.service_response_pub = rospy.Publisher('/DeliveryResponse', Bool, queue_size=5)
+        self.Dillystop_pub = rospy.Publisher('/DillyDilveryStop', Bool, queue_size=5)
 
-    def dillystatus_callback(self, delivery):
+    def dillystatus_callback(self, delivery): # need to be change 
         # print(len(delivery.deliveryItem))
+        self.DillyDeliveryItem = delivery.deliveryItem
         if len(delivery.deliveryItem) == 0:
             self.Pickup = True
         else:
@@ -48,20 +51,25 @@ class DeliveryNode:
         x = odom_data.pose.pose.position.x
         y = odom_data.pose.pose.position.y
 
-        # DeliveryArea = math.sqrt((x - 65.2)**2 + (y - (44.1))**2)
-        DeliveryArea = math.sqrt((x - 30.7)**2 + (y - (-41.1))**2)
+        DeliveryArea = math.sqrt((x - 65.2)**2 + (y - (44.1))**2 ) # need to be change
+        # DeliveryArea = math.sqrt((x - 30.7)**2 + (y - (-41.1))**2)
         # DeliveryArea = math.sqrt((x - 372.1)**2 + (y - (-116.3))**2)
         # print(self.DillyStatusStop)
         # print(DeliveryArea)
+        if DeliveryArea < 1.5 and (3 not in self.DillyDeliveryItem):
+            self.Dillystop_pub.publish(Bool(data=True))
+        else:
+            self.Dillystop_pub.publish(Bool(data=False))
+
         if self.DillyStatusStop == True and DeliveryArea < 1.5:
             self.service_call = True
         else:
             self.service_call = False
+            
 
 
     def run(self):
         while not rospy.is_shutdown():
-            self.service_response_pub.publish(Bool(data=True))
             # print(self.service_result)
             if self.service_call:
                 rospy.wait_for_service('/WoowaDillyEventCmd')
@@ -72,16 +80,18 @@ class DeliveryNode:
                     # print(self.Pickup)
                     self.request.isPickup = self.Pickup
                     if self.Pickup:
-                        self.request.deliveryItemIndex = 5
+                        self.request.deliveryItemIndex = 3
                     else:
-                        self.request.deliveryItemIndex = 5   
+                        self.request.deliveryItemIndex = 3   
                         
                         # print(self.request)
                         # Call the service
                     self.response = woowa_dilly_event_cmd(self.request)
                     if self.response.response.result:
+                        self.service_response_pub.publish(self.response.response.result)
                         rospy.loginfo("Service was successful. Result: True")
                     else:
+                        self.service_response_pub.publish(self.response.response.result)
                         rospy.loginfo("Service was successful, but result is False")
                 except rospy.ServiceException as e:
                     rospy.logerr("Service call failed: %s", str(e))

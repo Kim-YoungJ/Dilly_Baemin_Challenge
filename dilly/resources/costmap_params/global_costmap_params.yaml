@@ -2,7 +2,7 @@ global_costmap:
   global_frame: map
   robot_base_frame: velodyne
   update_frequency: 5
-  publish_frequency: 1
+  publish_frequency: 3
   width: 200.0
   height: 200.0
   resolution: 0.05

@@ -18,6 +18,7 @@ from morai_msgs.msg import SkidSteer6wUGVCtrlCmd
 from geometry_msgs.msg import Point, PoseStamped, Twist
 # from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from nav_msgs.msg import OccupancyGrid, Odometry
+from morai_msgs.msg import WoowaDillyStatus 
 from std_srvs.srv import Empty
 from tf.transformations import euler_from_quaternion
 from visualization_msgs.msg import Marker
@@ -59,10 +60,16 @@ class mppiControllerNode():
                                              Odometry,
                                              self.OdometryCallback,
                                              queue_size=10)
+        self.Jackal_states = ([8.004646347428206, -38.72949782339856, 0.019835720769958525])
 
         self.goal_pub = rospy.Publisher('goal_achieved', Bool, queue_size=5)
         self.goal_sub = rospy.Subscriber('txt_data', Float32MultiArray, self.goal_sub_callback, queue_size=10)
+        self.OutdoorPortlGoal = self.IndoorPortlGoal = True
         self.service_response_sub = rospy.Subscriber('/DeliveryResponse', Bool, self.service_reponse_callback,queue_size=10)
+        self.service_data = False
+        self.Dillystop_sub = rospy.Subscriber('/DillyDilveryStop', Bool, self.Dillystop_callback, queue_size=10)
+        self.DillyStopSign = False
+        self.dillystatus_sub = rospy.Subscriber('/WoowaDillyStatus', WoowaDillyStatus, self.dillystatus_callback)
 
         # To subscribe to the local costmap published by move_base (namely, costmap_2d)
         self.local_costmap_sub = rospy.Subscriber("local_costmap",
@@ -70,7 +77,7 @@ class mppiControllerNode():
                                                   self.localCostmapCallback,
                                                   queue_size=10)
 
-        # self.cmd_vel_pub = rospy.Publisher('/6wheel_skid_ctrl_cmd', SkidSteer6wUGVCtrlCmd, queue_size=1)
+        self.cmd_vel_pub = rospy.Publisher('/6wheel_skid_ctrl_cmd', SkidSteer6wUGVCtrlCmd, queue_size=1)
         self.predicted_path_pub = rospy.Publisher("visualization_marker",
                                                   Marker,
                                                   queue_size=5)
@@ -281,11 +288,102 @@ class mppiControllerNode():
             case = 5
         return desired_heading, case
 
+    def IndoorDis(self):
+        state = np.copy(self.Jackal_states)
+        indoordis = np.sqrt(np.square(-42.0 - state[1]) +np.square(3.0 - state[0]))
+        return indoordis
+    
+    def OutdoorDis(self):
+        state = np.copy(self.Jackal_states)
+        outdoordis = np.sqrt(np.square(-140.0 - state[1]) +np.square(430.0 - state[0]))
+        return outdoordis
+    
+    def goal_sub_callback(self, msg):
+        self.desired_pose = msg.data
+        target = self.desired_pose
+
+        IndoorPortalGoalDis = np.sqrt(np.square(-42.0 - target[1]) +np.square(3.0 - target[0]))
+        OutdoorPortalGoalDis = np.sqrt(np.square(-140.0 - target[1]) +np.square(430.0 - target[0]))
+        indoordis = self.IndoorDis()
+        outdoordis = self.OutdoorDis()
+
+        if IndoorPortalGoalDis < 0.5 and indoordis < 1.5:
+             self.IndoorPortlGoal= True
+        else:
+             self.IndoorPortlGoal= False
+        
+        if OutdoorPortalGoalDis < 0.5 and outdoordis < 1.5:
+             self.OutdoorPortlGoal= True
+        else:
+             self.OutdoorPortlGoal= False
+
+    def service_reponse_callback(self, msg):
+        # print(msg.data)
+        self.service_data = msg.data
+
+    def Dillystop_callback(self, msg):
+        self.DillyStopSign = msg.data
+
+    def dillystatus_callback(self,delivery):
+        self.delivery_number = delivery.deliveryItem
+        
+
+    def Calculate_DistanceGoal(self):
+        self.state = np.copy(self.Jackal_states)
+        self.targets = np.copy(self.desired_pose)
+
+        self.distanceToGoal = np.sqrt(np.square(self.targets[1] - self.state[1]) + np.square(self.targets[0] - self.state[0]))
+        
+    def Goal_achieve(self):
+        if self.IndoorPortlGoal == True and self.OutdoorPortlGoal == False:
+            while True:
+                transfer = np.sqrt(np.square(-140.0 - self.Jackal_states[1]) +np.square(430.0 - self.Jackal_states[0]))
+                if transfer > 3:
+                    rospy.loginfo("Going To Indoor Portal")
+                    self.ctrl_cmd_msg = SkidSteer6wUGVCtrlCmd()
+                    self.ctrl_cmd_msg.cmd_type = 3
+                    self.ctrl_cmd_msg.Target_linear_velocity = 2
+                    self.ctrl_cmd_msg.Target_angular_velocity = 0
+                    self.cmd_vel_pub.publish(self.ctrl_cmd_msg)
+                
+                else:
+                    self.goal_pub.publish(Bool(data=True))
+                    self.goal_pub.publish(Bool(data=False))
+                    break
+
+        elif self.IndoorPortlGoal == False and self.OutdoorPortlGoal == True:
+            None
+        elif self.IndoorPortlGoal == False and self.OutdoorPortlGoal == False:
+            if self.DillyStopSign == True:
+                rospy.loginfo("Delivery")
+                while 3 not in self.delivery_number:
+                    self.ctrl_cmd_msg = SkidSteer6wUGVCtrlCmd()
+                    self.ctrl_cmd_msg.cmd_type = 3
+                    self.ctrl_cmd_msg.Target_linear_velocity = 0
+                    self.ctrl_cmd_msg.Target_angular_velocity = 0
+                    self.cmd_vel_pub.publish(self.ctrl_cmd_msg)
+                    if 3 in self.delivery_number:
+                        self.goal_pub.publish(Bool(data=True))
+                        self.goal_pub.publish(Bool(data=False))
+                        break
+
+            elif self.distanceToGoal < self.minimumDistance - 0.1:
+                self.ctrl_cmd_msg = SkidSteer6wUGVCtrlCmd()
+                self.ctrl_cmd_msg.cmd_type = 3
+                self.ctrl_cmd_msg.Target_linear_velocity = 0
+                self.ctrl_cmd_msg.Target_angular_velocity = 0
+                self.cmd_vel_pub.publish(self.ctrl_cmd_msg)
+                self.goal_pub.publish(Bool(data=True))
+                self.goal_pub.publish(Bool(data=False))
+
+        
+        
+
     """ @brief: The primary function for running the MPPI algorithm """
     def run_mppi(self):
         try:
             # Sleep for 5 seconds to be sure that all sensors are active
-            # rospy.sleep(2.0)
+            rospy.sleep(2.0)
             if self.Jackal_states != None:
                 rospy.loginfo("The MPPI controller got first odometry message")
                 self.init_pose = self.Jackal_states
@@ -298,12 +396,13 @@ class mppiControllerNode():
                                                 self.costmap_updated_origin)
 
                 # Read the current and desired states
-                self.state = np.copy(self.Jackal_states)
-                self.targets = np.copy(self.desired_pose)
+                # self.state = np.copy(self.Jackal_states)
+                # self.targets = np.copy(self.desired_pose)
 
-                self.distanceToGoal = np.sqrt(
-                    np.square(self.targets[1] - self.state[1]) +
-                    np.square(self.targets[0] - self.state[0]))
+                # self.distanceToGoal = np.sqrt(
+                #     np.square(self.targets[1] - self.state[1]) +
+                #     np.square(self.targets[0] - self.state[0]))
+                self.Calculate_DistanceGoal()
 
                 if self.without_heading:
                     if self.distanceToGoal > self.minimumDistance:
@@ -358,61 +457,41 @@ class mppiControllerNode():
                     self.fail = True
                     break
                 
-                print(u[0])
-                print(u[1])
-                # self.ctrl_cmd_msg = SkidSteer6wUGVCtrlCmd()
-                # self.ctrl_cmd_msg.cmd_type = 3
-                # self.ctrl_cmd_msg.Target_linear_velocity = u[0]
-                # self.ctrl_cmd_msg.Target_angular_velocity = -u[1]
-                # self.cmd_vel_pub.publish(self.ctrl_cmd_msg)
+                # print(u[0])
+                # print(u[1])
+                self.ctrl_cmd_msg = SkidSteer6wUGVCtrlCmd()
+                self.ctrl_cmd_msg.cmd_type = 3
+                self.ctrl_cmd_msg.Target_linear_velocity = u[0]
+                self.ctrl_cmd_msg.Target_angular_velocity = -u[1]
+                self.cmd_vel_pub.publish(self.ctrl_cmd_msg)
 
                 # Publish the optimal predicted path obtained by MPPI
                 self.publish_predicted_path()
-
+                
                 # Check if the goal pose is reached
-                self.state = np.copy(self.Jackal_states)
-                self.targets = np.copy(self.desired_pose)
+                # self.state = np.copy(self.Jackal_states)
+                # self.targets = np.copy(self.desired_pose)
 
-                self.distanceToGoal = np.sqrt(
-                    np.square(self.targets[1] - self.state[1]) +
-                    np.square(self.targets[0] - self.state[0]))
-
-                IndoorPortal = np.sqrt(
-                    np.square(-42.0 - self.state[1]) +
-                    np.square(3.0 - self.state[0]))
-                print(IndoorPortal)
-                rospy.loginfo(IndoorPortal)
-
-                while IndoorPortal <= 0.5:
-                    print("in portal now")
-                    self.ctrl_cmd_msg = SkidSteer6wUGVCtrlCmd()
-                    self.ctrl_cmd_msg.cmd_type = 3
-                    self.ctrl_cmd_msg.Target_linear_velocity = 2
-                    self.ctrl_cmd_msg.Target_angular_velocity = 0
-                    self.cmd_vel_pub.publish(self.ctrl_cmd_msg)
-                    self.state = np.copy(self.Jackal_states)
-                    IndoorPortal = np.sqrt(
-                    np.square(-42.0 - self.state[1]) +
-                    np.square(3.0 - self.state[0]))
-                    if IndoorPortal > 0.5:
-                        self.goal_pub.publish(Bool(data=True))
-                        self.goal_pub.publish(Bool(data=False))
-                        print("out portal!")
-                        break
-                    
-                if self.distanceToGoal < self.minimumDistance - 0.1:
-                    self.ctrl_cmd_msg = SkidSteer6wUGVCtrlCmd()
-                    self.ctrl_cmd_msg.cmd_type = 3
-                    self.ctrl_cmd_msg.Target_linear_velocity = 0
-                    self.ctrl_cmd_msg.Target_angular_velocity = 0
-                    self.cmd_vel_pub.publish(self.ctrl_cmd_msg)
-                    self.goal_pub.publish(Bool(data=True))
-                    self.goal_pub.publish(Bool(data=False))
+                # self.distanceToGoal = np.sqrt(
+                #     np.square(self.targets[1] - self.state[1]) +
+                #     np.square(self.targets[0] - self.state[0]))
+                self.Calculate_DistanceGoal()
+                self.Goal_achieve()
+                # if self.distanceToGoal < self.minimumDistance - 0.1:
+                #     self.ctrl_cmd_msg = SkidSteer6wUGVCtrlCmd()
+                #     self.ctrl_cmd_msg.cmd_type = 3
+                #     self.ctrl_cmd_msg.Target_linear_velocity = 0
+                #     self.ctrl_cmd_msg.Target_angular_velocity = 0
+                #     self.cmd_vel_pub.publish(self.ctrl_cmd_msg)
+                #     self.goal_pub.publish(Bool(data=True))
+                #     self.goal_pub.publish(Bool(data=False))
                 
                 self.rate.sleep()
         except rospy.ROSInterruptException:
             print("ROS Terminated")
             pass
+
+    
 
     """@brief: Plotting the states, corresponding optimal control action, and instantaneous running cost """
     def dataPlotting(self):
@@ -459,14 +538,7 @@ class mppiControllerNode():
                          self.control_history, self.mppi_time_history,
                          self.results_rootpath)
     
-    def goal_sub_callback(self, msg):
-        self.desired_pose = msg.data
-
-    def service_reponse_callback(self, msg):
-        print(msg.data)
-        self.service_data = msg.data
-        
-
+    
 
 if __name__ == "__main__":
     MPPI_Controller_Node = mppiControllerNode()

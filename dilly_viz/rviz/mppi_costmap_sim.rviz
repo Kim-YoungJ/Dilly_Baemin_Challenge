@@ -339,7 +339,7 @@ Visualization Manager:
       Length: 0.699999988079071
       Name: Axes
       Radius: 0.07999999821186066
-      Reference Frame: base_link
+      Reference Frame: velodyne
       Show Trail: false
       Value: true
   Enabled: true

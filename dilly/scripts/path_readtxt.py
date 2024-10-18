@@ -16,8 +16,8 @@ class TxtPublisherNode:
         self.sub = rospy.Subscriber('goal_achieved', Bool, self.goal_callback)
 
         # File path to the 3to3_fix.txt file (update this to the correct path)
-        # self.file_path = './path_list/test_sin3.txt'  # Update this to the correct path
-        self.file_path = './path_list/portal_test.txt' 
+        self.file_path = './path_list/test_sin3.txt'  # Update this to the correct path
+        # self.file_path = './path_list/portal_test.txt' 
 
         # Read the file lines into memory
         self.lines = self.read_file(self.file_path)
