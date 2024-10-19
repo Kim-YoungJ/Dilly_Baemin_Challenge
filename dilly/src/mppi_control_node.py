@@ -9,9 +9,13 @@ import rospy
 
 import actionlib
 # Import MPPI, Jackal Math. models, and utils
-import mppi_control.utils as uls
-from mppi_control.jackal import Jackal
-from mppi_control.mppi import MPPI_Controller
+# import mppi_control.utils as uls
+# from mppi_control.jackal import Jackal
+# from mppi_control.mppi import MPPI_Controller
+import dilly.utils as uls
+from dilly.jackal import Jackal
+from dilly.mppi import MPPI_Controller
+
 from morai_msgs.msg import SkidSteer6wUGVCtrlCmd
 
 # ROS messages
